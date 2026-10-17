@@ -31,7 +31,15 @@ When asked to commit:
 - **Do not run `git add` without explicit instruction from the user.** Only commit files the user has explicitly staged.
 - **Do not run `git push` without explicit instruction from the user.**
 - **Always verify `git status` before committing** — list what will be committed and confirm with the user if unsure.
-- **Commit message format follows `.claude/skills/conventional-commits.md`** (Conventional Commits 1.0.0): `<type>[scope]: description` with `fix`, `feat`, `!`, etc.
+- **Commit message format follows `.claude/skills/conventional-commits.md`** (Conventional Commits 1.0.0):
+  ```
+  <type>[optional scope]: <description>
+
+  [optional body]
+
+  [optional footer(s)]
+  ```
+  Types: `fix`, `feat`, `!` (breaking change), plus accepted types: `build`, `chore`, `ci`, `docs`, `style`, `refactor`, `perf`, `test`, `revert`.
 - Present the chosen type and scope to the user before committing so they can confirm it is correct.
 
 ## 0.3 Build Stack: Vanilla C/C++ via LLVM/Clang, No Emscripten
@@ -41,6 +49,28 @@ When asked to commit:
 - **Do not use Emscripten.** Only raw `clang` (or `clang++`) targeting `wasm32` is acceptable.
 - Do not pull in Emscripten SDKs, ports, or compatibility shims.
 - If you encounter references to Emscripten in tooling or dependencies, surface them for the user's decision — do not adopt them silently.
+
+## 0.4 C++ Code: Always Follow Google C++ Style Guide
+
+**Any C++ code written, reviewed, or refactored in this project MUST follow `.claude/skills/google-cpp-style-guide.md`.**
+
+When producing C++ code (`.h`, `.cc`, `.cpp`):
+- **Load the skill** — invoke the `google-cpp-style-guide` skill before writing or reviewing any C++ code.
+- **Header files** must be self-contained, end in `.h`, and use `#define` guards (`_PROJECT_PATH_FILE_H_`).
+- **Include What You Use** — no transitive inclusions; no forward declarations where a real include works.
+- **Target C++20** — do not use C++23 features. No non-standard extensions.
+- **Naming** — File: `snake_case`; Class/Struct: `CamelCase`; Variable/Function: `snake_case`/`CamelCase`; Constant: `snake_case`; Macro: `UPPER_SNAKE_CASE`.
+- **RAII for all resources** — load the `cpp-raii` skill before writing or reviewing C++ code.
+  - **Dynamic allocation:** any use of `new`, `malloc`, or other dynamic allocation MUST be immediately wrapped in an RAII wrapper (smart pointer or custom RAII class). Bare raw pointers from allocation are forbidden.
+  - **Acquire-once-release-every-time resources:** any resource that must be released at the end of its scope (file I/O, mutex locks, network sockets, CUDA handles, glib objects, POSIX file descriptors, JNI references, etc.) MUST be managed via RAII. Manual `open`/`close`, `lock`/`unlock`, `allocate`/`free` pairs are forbidden.
+  - **Smart pointers:** use `std::unique_ptr` for sole ownership, `std::shared_ptr` only when genuine shared ownership is required, raw pointers only for non-owning references.
+- **`const`** — prefer `const` and `constexpr` wherever possible.
+- **`auto`** — use for iteration and obvious types; not when it obscures meaning.
+- **Formatting** — 4 spaces (no tabs); braced initializers; 2-space continuation indentation.
+- **Functions** — prefer short functions; default arguments allowed.
+- **Comments** — `//` for inline, `///` for docs; TODOs must include owner and issue number.
+
+If project-specific C++ conventions exist and conflict, surface the conflict for the user's decision — do not silently pick one.
 
 ## 1. Think Before Coding
 
