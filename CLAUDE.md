@@ -20,9 +20,10 @@ When creating a plan, the plan file **MUST** be written to this project's `.clau
 .claude/plans/<plan-name>.md
 ```
 
-- Always check whether the directory exists (`mkdir -p .claude/plans`).
-- Never write plans outside of this project directory.
+- **Always create the directory first** — before writing any plan, run `mkdir -p .claude/plans` at the project root.
+- **Never write plans outside of this project directory.** Writing to `~/.claude/plans/` (global user directory) is a violation.
 - If a plan for the same task already exists, overwrite it rather than creating a duplicate.
+- **Post-write verification:** after writing, `ls .claude/plans/` to confirm the file landed in the project-local directory, not `~/.claude/plans/`. If it landed elsewhere, move it immediately.
 
 ## 0.2 Git Commits: Only Staged Files, Conventional Commits Format
 
