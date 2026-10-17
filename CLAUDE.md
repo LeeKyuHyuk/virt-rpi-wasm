@@ -41,7 +41,8 @@ When asked to commit:
   [optional footer(s)]
   ```
   Types: `fix`, `feat`, `!` (breaking change), plus accepted types: `build`, `chore`, `ci`, `docs`, `style`, `refactor`, `perf`, `test`, `revert`.
-- Present the chosen type and scope to the user before committing so they can confirm it is correct.
+- **The `[optional body]` is mandatory.** Every commit message MUST include a body section describing what changed and why, not just the subject line.
+- Present the chosen type, scope, and body to the user before committing so they can confirm it is correct.
 
 ## 0.3 Build Stack: Vanilla C/C++ via LLVM/Clang, No Emscripten
 
