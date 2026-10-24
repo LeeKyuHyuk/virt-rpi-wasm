@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
@@ -130,6 +132,81 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
----
+## 5. Build, Test & Run
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+### Build
+
+```bash
+cmake -B build               # Configure (creates build/ directory)
+cmake --build build          # Build everything (WASM + server + tests)
+```
+
+Or equivalently:
+
+```bash
+mkdir -p build && cd build
+cmake ..
+make -j
+```
+
+The build produces three artifacts:
+
+| Target | Output | Description |
+|--------|--------|-------------|
+| `virt-rpi_wasm` (custom target) | `build/virt-rpi.wasm` | WebAssembly module, compiled with `clang++ --target=wasm32 -O2 -nostdlib -nostartfiles -Wl,--no-entry -Wl,--export-all -Wl,--allow-undefined` |
+| `run-server` | `build/run-server` | HTTP server binary serving project files from project root |
+| `run-server-test` | `build/run-server-test` | Unit test binary |
+
+### Run the server
+
+```bash
+./build/run-server
+# Outputs: "Listening on http://localhost:<port>"
+# Opens http://localhost:<port>/index.html in browser
+```
+
+The server auto-finds a free TCP port starting at 8000. Watch the output to see which port was selected.
+
+### Run all tests
+
+```bash
+ctest --test-dir build        # Run all registered CTest tests
+ctest --test-dir build -V     # Verbose output (shows per-test details)
+ctest --test-dir build --output-on-failure  # Only print output for failing tests
+```
+
+### Run a single test
+
+```bash
+ctest --test-dir build --tests-regex server-basic -V
+```
+
+This runs the `server-basic` test, which starts a temporary HTTP server in a background thread, fetches `/index.html` and `/build/virt-rpi.wasm` to verify they are served correctly, and tests port fallback when port 8000 is occupied.
+
+### Project architecture
+
+```
+.
+├── src/main.cc              → WebAssembly module (extern "C" exports)
+├── server/server.cc         → HTTP server binary (cpp-httplib, main)
+├── server/server_port.cc    → TCP port scanner library (no main)
+├── server/test_server.cc    → Unit tests (cpp-httplib Client)
+├── js/main.js               → JavaScript WASM loader (fetch → instantiate → read memory)
+├── index.html               → HTML entry page (loads js/main.js as ES module)
+├── lib/cpp-httplib/         → Git submodule (header-only HTTP library)
+└── CMakeLists.txt           → Build configuration (CMake 3.20+, C++20)
+```
+
+**Three compilation units:**
+
+1. **WASM module** (`src/main.cc`): Compiles to `virt-rpi.wasm` with no standard library. Exports `get_message()` and `get_message_length()` via `extern "C"`. JavaScript fetches the `.wasm` file, instantiates it, reads the exported pointer, slices the linear memory with `Uint8Array`, and decodes the string.
+
+2. **HTTP server** (`server/server.cc` + `server/server_port.cc`): A two-library hierarchy — `server_port_lib` (port scanner, no main) is linked by `server_lib` (httplib server with main) which is linked by `run-server` (executable). `find_free_port` scans TCP ports by attempting socket connects; a successful connect means the port is in use, a failure means it is free.
+
+3. **Unit tests** (`server/test_server.cc`): Links against `server_lib` and `server_port_lib`. Starts an HTTP server in a background thread, polls for readiness, then uses cpp-httplib `Client` to verify `GET /index.html` (status 200), `GET /build/virt-rpi.wasm` (status 200, non-empty body), and port fallback when port 8000 is occupied. Server is shut down via `svr.stop()` (unblocks `listen()`), then the thread is joined.
+
+**Key CMake design decisions:**
+- WASM uses a `custom_command` (avoids `--dependency-file` incompatibility with `wasm-ld`)
+- `server_port_lib` is a static library with no `main`, so it can be linked by both `run-server` and `run-server-test` without "multiple definition of main" errors
+- `server_lib` is also a static library (not an executable) to avoid duplicate `main` when linked by the test binary
+- All libraries define `PROJECT_ROOT` to the source directory so the server serves the correct files
