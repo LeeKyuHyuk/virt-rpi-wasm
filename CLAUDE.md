@@ -191,15 +191,15 @@ This runs the `server-basic` test, which starts a temporary HTTP server in a bac
 ├── server/server.cc         → HTTP server binary (cpp-httplib, main)
 ├── server/server_port.cc    → TCP port scanner library (no main)
 ├── server/test_server.cc    → Unit tests (cpp-httplib Client)
-├── js/main.js               → JavaScript WASM loader (fetch → instantiate → read memory)
-├── index.html               → HTML entry page (loads js/main.js as ES module)
+├── js/main.js               → JavaScript WASM loader + file-mount UI (Blob URL streaming for large files, FileReader for small)
+├── index.html               → HTML entry page (file input, debug checkbox, mount button, status display)
 ├── lib/cpp-httplib/         → Git submodule (header-only HTTP library)
 └── CMakeLists.txt           → Build configuration (CMake 3.20+, C++20)
 ```
 
 **Three compilation units:**
 
-1. **WASM module** (`src/main.cc`): Compiles to `virt-rpi.wasm` with no standard library. Exports `get_message()` and `get_message_length()` via `extern "C"`. JavaScript fetches the `.wasm` file, instantiates it, reads the exported pointer, slices the linear memory with `Uint8Array`, and decodes the string.
+1. **WASM module** (`src/main.cc`): Compiles to `virt-rpi.wasm` with no standard library (`-nostdlib -nostartfiles`). Exports `get_message()`, `get_message_length()`, and file-mount functions (`load_file()`, `get_file_buffer()`, `get_file_length()`, `free_file()`, `set_process_flag()`, `get_process_flag()`, `get_status()`) via `extern "C"`. Because `-nostdlib` is used, all types are raw built-in C types: `const unsigned char*` for data pointers, `unsigned long` for lengths, `unsigned int` for file sizes (supports up to 4.3 GB). JavaScript fetches the `.wasm` file, instantiates it, reads the exported `memory` buffer, copies file data into it via `Uint8Array.set()`, and calls `load_file()` to register the pointer + length. For large files (> 100 MB), file data is streamed into WASM memory via Blob URL (`URL.createObjectURL(file)` + `fetch(blobUrl)` chunked streaming with `Response.body.getReader()`). For small files (≤ 100 MB), `File.arrayBuffer()` reads the entire file at once.
 
 2. **HTTP server** (`server/server.cc` + `server/server_port.cc`): A two-library hierarchy — `server_port_lib` (port scanner, no main) is linked by `server_lib` (httplib server with main) which is linked by `run-server` (executable). `find_free_port` scans TCP ports by attempting socket connects; a successful connect means the port is in use, a failure means it is free.
 

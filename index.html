@@ -3,9 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hello WASM</title>
+    <title>WASM File Mount</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        #status { margin-top: 10px; color: #555; }
+        #fileInfo { margin-top: 5px; color: #333; }
+        .file-section { margin-top: 20px; border-top: 1px solid #ccc; padding-top: 10px; }
+        .debug-section { margin-top: 10px; }
+        .debug-section label { margin-right: 8px; }
+        .debug-section input[type="checkbox"] { margin-right: 4px; }
+    </style>
 </head>
 <body>
+    <h1>WASM File Mount</h1>
+    <div id="status">State: idle</div>
+    <div id="fileInfo"></div>
+    <div class="file-section">
+        <input type="file" id="fileInput" />
+        <div class="debug-section">
+            <label><input type="checkbox" id="debugCheckbox" /> Debug</label>
+        </div>
+        <button id="mountBtn" onclick="mountClicked()">Mount</button>
+    </div>
     <script type="module" src="js/main.js"></script>
 </body>
 </html>
