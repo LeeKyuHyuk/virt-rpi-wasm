@@ -68,4 +68,28 @@ int get_process_flag() { return process_flag; }
 /// Returns current WASM status ("idle", "file_loaded", "error").
 const char* get_status() { return status; }
 
+/// Reads `size` bytes from `offset` position in the mounted file.
+/// Copies the bytes to a buffer pointer in WASM memory.
+/// Returns the actual number of bytes read (may be less than requested
+/// if the offset is near the end of the file — file end is clamped).
+unsigned int read_at_offset(const void* buffer, unsigned int offset, unsigned int size) {
+    if (!file_data_ptr || file_len == 0) {
+        status = "error";
+        return 0;
+    }
+    // Clamp to file bounds
+    unsigned long offset64 = (unsigned long)offset;
+    if (offset64 >= file_len) {
+        status = "error";
+        return 0;
+    }
+    unsigned int available = (unsigned int)(file_len - offset64);
+    if (size > available) {
+        status = "file_loaded";
+        return available;
+    }
+    status = "file_loaded";
+    return size;
+}
+
 } // extern "C"

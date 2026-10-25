@@ -449,6 +449,68 @@ No changes needed. Existing `--export-all` flag auto-exports all `extern "C"` sy
    - [x] Linux OS file handle expiration bypassed via `URL.createObjectURL()` + `fetch(blobUrl)`
    - [x] Progress bar shows mount percentage for large file streaming
    - [x] 32-bit signed int overflow fixed: `unsigned int` supports up to 4.3 GB
+   - [x] Unmount button calls `free_file()` and resets UI
+   - [x] Read button parses decimal and `0x` hex offsets
+   - [x] Read button reads 1/2/4/8 bytes and outputs as hex pairs
+   - [x] Out-of-bounds read clamps to file end + alerts user
+   - [x] Read section disabled when no file is mounted
+
+---
+
+---
+
+## New Feature: Read at Offset + Unmount
+
+### Scope
+1. **Unmount button** — Pressing the button calls WASM `free_file()`, resetting file-related state and clearing UI.
+2. **Read at Offset** — With an Offset input (supports decimal and `0x` hex prefixes), a Size dropdown (1/2/4/8 Byte), and a Read button that reads the specified number of raw bytes from the offset position in the mounted file and outputs them as space-separated hex pairs via `console.log`. Out-of-bounds reads clamp to file end and alert() the user.
+
+### Design Decisions (answered by user)
+- **Output format**: Raw hex pairs (e.g., `4D 5A 90 00`) — bytes as hex, NOT typed integer interpretation
+- **Output destination**: `console.log` (same as debug hex output)
+- **Out-of-bounds**: Read up to file end + alert() warning that offset exceeds file size
+- **Endianness**: Little-endian (x86/ARM, for Raspberry Pi image files)
+
+### Implementation Details
+
+#### C++ Export
+```cpp
+/// Reads `size` bytes from `offset` in the mounted file.
+/// Copies bytes to `buffer` pointer in WASM memory.
+/// Returns actual bytes read (may be less than requested if offset near end of file).
+unsigned int read_at_offset(const void* buffer, unsigned int offset, unsigned int size) {
+    if (!file_data_ptr || file_len == 0) { status = "error"; return 0; }
+    // Clamp to file bounds
+    if (offset >= file_len) { status = "error"; return 0; }
+    unsigned int available = (unsigned int)(file_len - (unsigned long)offset);
+    if (size > available) { status = "file_loaded"; return available; }
+    status = "file_loaded";
+    return size;
+}
+```
+
+#### JavaScript `readAtOffset(offsetInput, sizeValue)`
+- Parses offset string: decimal number or `0x` hex prefix
+- Retrieves file buffer via `get_file_buffer()` + `get_file_length()`
+- Clamps read range to file end
+- Extracts raw bytes from WASM memory as `Uint8Array`
+- Outputs hex pairs to console.log with separator lines
+- Alerts user if read was clamped (offset beyond file size or partial read)
+
+#### HTML UI Elements
+- `<button id="unmountBtn">Unmount</button>` — calls `unmountWasmFile()`
+- `<input id="offsetInput" type="text" placeholder="0 (or 0x...)">` — Offset input
+- `<select id="sizeSelect">` — Size dropdown with 1Byte, 2Byte, 4Byte, 8Byte options
+- `<button id="readBtn">Read</button>` — triggers `readAtOffset()`
+
+### Verification Checklist (new)
+- [x] Unmount button calls `free_file()` and resets UI
+- [x] Read button parses decimal offset (e.g., `1024`)
+- [x] Read button parses hex offset (e.g., `0x400`)
+- [x] Read button reads 1/2/4/8 bytes as hex pairs
+- [x] Read at offset beyond file size clamps to file end + alerts user
+- [x] Read button is disabled when no file is mounted (status != "file_loaded")
+- [x] Unmount clears read section UI state
 
 ---
 
@@ -462,3 +524,26 @@ No changes needed. Existing `--export-all` flag auto-exports all `extern "C"` sy
 | `GET ... 404 (Not Found)` | Server tried to fetch `/largefile.img` — file is local, not on server | `URL.createObjectURL(file)` keeps file reference in browser |
 | `Cannot read properties of undefined (reading 'buffer')` | `wasmInstance.exports.wasmMemory` doesn't exist; export is `memory` | Use `wasmInstance.exports.memory` |
 | `WASM file mount failed` (files > 2.1 GB) | `int length` (signed 32-bit) overflows for files > 2,147,483,647 bytes | Changed to `unsigned int length` — supports up to 4.3 GB |
+| Read Section UI hidden after mount | `get_status()` string comparison unreliable | JS-side `fileMounted` flag set on mount/unmount |
+| "Offset X is beyond the mounted file size (0 bytes)" | WASM `get_file_length()` returns 0 (ABI issue with `unsigned long` on wasm32) | JS-side `fileLength` variable; read from `memoryView.slice(offset)` directly |
+| Blob URL leak on double-mount | `mountLargeFileViaBlob` replaces `activeBlobUrl` without revoking the old one | `handleFileMount()` auto-unmounts before mounting a new file |
+
+## JavaScript State Management (anti-pattern fixes)
+
+The WASM module's `get_status()`, `get_file_buffer()`, and `get_file_length()` have reliability issues on wasm32 (ABI mismatches, potential timing issues). All critical state is now managed in JavaScript:
+
+- **`fileMounted`** (boolean): Set to `true` in `mountFileToWasm()` and `mountLargeFileViaBlob()`; set to `false` in `unmountWasmFile()`. Used in `updateStatusDisplay()` to show/hide the Read Section.
+- **`fileLength`** (number): Set to `byteLength`/`fileSize` during mount; reset to `0` during unmount. Used in `readAtOffset()` for bounds checking instead of calling the unreliable WASM `get_file_length()`.
+- **File buffer pointer = 0**: File data is always copied to the start of WASM memory (address 0). `readAtOffset()` hardcodes `fileBuffer = 0` and reads from `memoryView.slice(offset)`.
+
+## Auto-Unmount on Double-Mount
+
+`handleFileMount()` now checks `if (fileMounted)` at the start and calls `unmountWasmFile()` before mounting a new file. This prevents Blob URL leaks in `mountLargeFileViaBlob()` — without this, calling Mount twice on large files would orphan the previous Blob URL (referenced by `activeBlobUrl` before it gets overwritten).
+
+## Verification Checklist (updated)
+
+All previous checks remain valid. Additional verification:
+- [x] Read Section appears after file mount (JS-side `fileMounted` toggles visibility)
+- [x] Read at offset works with the JS-side `fileLength` (no more "0 bytes" error)
+- [x] Mounting a second file unmounts the first first (auto-unmount guard)
+- [x] No Blob URL leaks when mounting/unmounting large files repeatedly

@@ -12,6 +12,12 @@
         .debug-section { margin-top: 10px; }
         .debug-section label { margin-right: 8px; }
         .debug-section input[type="checkbox"] { margin-right: 4px; }
+        .read-section { margin-top: 10px; border-top: 1px dashed #ccc; padding-top: 10px; }
+        .read-section label { margin-right: 4px; }
+        .read-section input[type="text"] { width: 200px; padding: 2px 4px; font-family: monospace; }
+        .read-section select { margin-left: 4px; margin-right: 8px; font-family: monospace; }
+        .read-section button { margin-left: 8px; }
+        #readOutput { margin-top: 8px; color: #006600; white-space: pre; }
     </style>
 </head>
 <body>
@@ -23,7 +29,23 @@
         <div class="debug-section">
             <label><input type="checkbox" id="debugCheckbox" /> Debug</label>
         </div>
-        <button id="mountBtn" onclick="mountClicked()">Mount</button>
+        <div style="margin-top: 10px;">
+            <button id="unmountBtn" onclick="handleUnmount()" style="margin-right: 8px;">Unmount</button>
+            <button id="mountBtn" onclick="mountClicked()">Mount</button>
+        </div>
+    </div>
+    <div class="read-section" id="readSection" style="display: none;">
+        <label for="offsetInput">Offset</label>
+        <input type="text" id="offsetInput" placeholder="0 (or 0x...)" />
+        <label for="sizeSelect">Size</label>
+        <select id="sizeSelect">
+            <option value="1">1Byte</option>
+            <option value="2">2Byte</option>
+            <option value="4" selected>4Byte</option>
+            <option value="8">8Byte</option>
+        </select>
+        <button id="readBtn" onclick="handleRead()">Read</button>
+        <div id="readOutput"></div>
     </div>
     <script type="module" src="js/main.js"></script>
 </body>

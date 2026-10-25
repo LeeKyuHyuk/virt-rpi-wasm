@@ -191,15 +191,15 @@ This runs the `server-basic` test, which starts a temporary HTTP server in a bac
 ├── server/server.cc         → HTTP server binary (cpp-httplib, main)
 ├── server/server_port.cc    → TCP port scanner library (no main)
 ├── server/test_server.cc    → Unit tests (cpp-httplib Client)
-├── js/main.js               → JavaScript WASM loader + file-mount UI (Blob URL streaming for large files, FileReader for small)
-├── index.html               → HTML entry page (file input, debug checkbox, mount button, status display)
+├── js/main.js               → JavaScript WASM loader + file-mount + read-at-offset UI
+├── index.html               → HTML entry page (file input, debug checkbox, mount/unmount/read buttons)
 ├── lib/cpp-httplib/         → Git submodule (header-only HTTP library)
 └── CMakeLists.txt           → Build configuration (CMake 3.20+, C++20)
 ```
 
 **Three compilation units:**
 
-1. **WASM module** (`src/main.cc`): Compiles to `virt-rpi.wasm` with no standard library (`-nostdlib -nostartfiles`). Exports `get_message()`, `get_message_length()`, and file-mount functions (`load_file()`, `get_file_buffer()`, `get_file_length()`, `free_file()`, `set_process_flag()`, `get_process_flag()`, `get_status()`) via `extern "C"`. Because `-nostdlib` is used, all types are raw built-in C types: `const unsigned char*` for data pointers, `unsigned long` for lengths, `unsigned int` for file sizes (supports up to 4.3 GB). JavaScript fetches the `.wasm` file, instantiates it, reads the exported `memory` buffer, copies file data into it via `Uint8Array.set()`, and calls `load_file()` to register the pointer + length. For large files (> 100 MB), file data is streamed into WASM memory via Blob URL (`URL.createObjectURL(file)` + `fetch(blobUrl)` chunked streaming with `Response.body.getReader()`). For small files (≤ 100 MB), `File.arrayBuffer()` reads the entire file at once.
+1. **WASM module** (`src/main.cc`): Compiles to `virt-rpi.wasm` with no standard library (`-nostdlib -nostartfiles`). Exports `get_message()`, `get_message_length()`, and file-mount functions (`load_file()`, `get_file_buffer()`, `get_file_length()`, `free_file()`, `set_process_flag()`, `get_process_flag()`, `get_status()`, `read_at_offset()`) via `extern "C"`. Because `-nostdlib` is used, all types are raw built-in C types: `const unsigned char*` for data pointers, `unsigned long` for lengths, `unsigned int` for file sizes (supports up to 4.3 GB). JavaScript fetches the `.wasm` file, instantiates it, reads the exported `memory` buffer, copies file data into it via `Uint8Array.set()`, and calls `load_file()` to register the pointer + length. For large files (> 100 MB), file data is streamed into WASM memory via Blob URL (`URL.createObjectURL(file)` + `fetch(blobUrl)` chunked streaming with `Response.body.getReader()`). For small files (≤ 100 MB), `File.arrayBuffer()` reads the entire file at once.
 
 2. **HTTP server** (`server/server.cc` + `server/server_port.cc`): A two-library hierarchy — `server_port_lib` (port scanner, no main) is linked by `server_lib` (httplib server with main) which is linked by `run-server` (executable). `find_free_port` scans TCP ports by attempting socket connects; a successful connect means the port is in use, a failure means it is free.
 
@@ -210,3 +210,39 @@ This runs the `server-basic` test, which starts a temporary HTTP server in a bac
 - `server_port_lib` is a static library with no `main`, so it can be linked by both `run-server` and `run-server-test` without "multiple definition of main" errors
 - `server_lib` is also a static library (not an executable) to avoid duplicate `main` when linked by the test binary
 - All libraries define `PROJECT_ROOT` to the source directory so the server serves the correct files
+
+### JavaScript: File Mount and Read at Offset
+
+The JavaScript layer (`js/main.js`) provides the following capabilities beyond the original `get_message()` display:
+
+**File Mount:**
+- Select a file via the file input, click "Mount" to load it into WASM memory.
+- Small files (≤ 100 MB): read via `File.arrayBuffer()` — single synchronous read.
+- Large files (> 100 MB): stream via Blob URL (`URL.createObjectURL(file)` + `fetch(blobUrl)` with `Response.body.getReader()`) to avoid Linux OS file handle expiration issues.
+- WASM memory is grown (`wasmMemory.grow()`) to accommodate the file, and data is copied into memory at offset 0.
+- `load_file(ptr, length)` is called to register the pointer and length in WASM.
+
+**Read at Offset:**
+- After a file is mounted, the "Read at Offset" section becomes visible.
+- User enters an offset (decimal or `0x`-prefixed hex) and selects a read size (1, 2, 4, or 8 bytes).
+- Clicking "Read" reads bytes from WASM linear memory at the specified offset and displays them as hex.
+- Offset clamping: if the read would go past the end of the file, the size is clamped to available bytes.
+- Offset is validated against JS-side `fileLength`; an alert is shown if the offset is beyond file end.
+
+**Unmount:**
+- "Unmount" button calls `free_file()` in WASM and resets JS-side state.
+- The Read at Offset section is hidden after unmount.
+
+**Auto-Unmount on Double-Mount:**
+- If a file is already mounted and the user mounts another file, the existing file is auto-unmounted first.
+- This prevents Blob URL leaks: when mounting a new large file, the old Blob URL is revoked via `URL.revokeObjectURL()` during unmount.
+
+**Debug Hex Output:**
+- A "Debug" checkbox in the UI, when checked, prints the first 64 bytes of a mounted file as space-separated uppercase hex pairs to the browser console.
+- Reading at offset also prints the hex output to the console.
+
+**JavaScript State Management (anti-pattern fixes):**
+- `fileMounted` (boolean): Tracks mount state in JavaScript instead of relying on WASM `get_status()` string comparison. The WASM `get_status()` can be unreliable due to timing issues.
+- `fileLength` (number): Tracks the mounted file size in JavaScript instead of calling WASM `get_file_length()`. This avoids ABI issues with `unsigned long` on wasm32 where the return value was observed to be 0.
+- `fileBuffer` is hardcoded to 0: File data always starts at memory address 0 in WASM, so the buffer pointer from WASM is unnecessary — JavaScript reads directly from the WASM memory buffer.
+- These JS-side state variables are the source of truth for UI behavior; WASM state is secondary.

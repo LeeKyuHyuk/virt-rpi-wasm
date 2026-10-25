@@ -15,11 +15,24 @@ let wasmInstance = null;
 // (large files on Linux where OS file handles expire after seconds).
 let activeBlobUrl = null;
 
+// Track mount state in JavaScript (avoids relying on WASM get_status())
+let fileMounted = false;
+// Track file length in JavaScript (avoids calling WASM get_file_length() which may
+// have ABI issues with unsigned long on wasm32).
+let fileLength = 0;
+
 /// Called when Mount button is pressed.
 /// For large files (> 100 MB) reads via fetch from a Blob URL (streaming).
 /// For small files reads via FileReader (avoids unnecessary server round-trip).
 async function handleFileMount(file) {
     if (!file) return;
+
+    // If a file is already mounted, unmount it first (auto-unmount on double-mount).
+    // This prevents Blob URL leaks for large files: when mounting a new large file,
+    // the old Blob URL's reference is replaced and becomes orphaned unless revoked.
+    if (fileMounted) {
+        unmountWasmFile();
+    }
 
     // For large files, read from Blob URL via fetch (streaming, avoids NotReadableError)
     const LARGE_FILE_THRESHOLD = 100 * 1024 * 1024; // 100 MB
@@ -109,6 +122,10 @@ async function mountLargeFileViaBlob(file) {
     URL.revokeObjectURL(activeBlobUrl);
     activeBlobUrl = null;
 
+    // Mark file as mounted (JS-side state, avoids relying on get_status())
+    fileMounted = true;
+    fileLength = fileSize;
+
     // Finalize — update status with file info
     updateStatusDisplay(fileName, fileSize);
 
@@ -149,6 +166,9 @@ async function mountFileToWasm(arrayBuffer, fileName, fileSize) {
         throw new Error("WASM file mount failed.");
     }
 
+    // Mark file as mounted (JS-side state, avoids relying on get_status())
+    fileMounted = true;
+    fileLength = byteLength;
     updateStatusDisplay(fileName, fileSize);
 
     // Debug checkbox: print first 64 bytes of file as hex to console
@@ -172,13 +192,26 @@ function unmountWasmFile() {
     if (wasmInstance && wasmInstance.exports.free_file) {
         wasmInstance.exports.free_file();
     }
+    fileMounted = false;
+    fileLength = 0;
     updateStatusDisplay();
+    // Hide read section after unmount
+    const readSection = document.getElementById('readSection');
+    if (readSection) readSection.style.display = 'none';
+    const readOutput = document.getElementById('readOutput');
+    if (readOutput) readOutput.textContent = '';
+    document.getElementById('offsetInput').value = '';
 }
+
+/// Handler for the unmount button (exposed to HTML onclick).
+function handleUnmount() {
+    unmountWasmFile();
+}
+window.handleUnmount = handleUnmount;
 
 /// Updates the status and file info UI elements.
 function updateStatusDisplay(fileName, fileSize) {
-    if (!wasmInstance) return;
-    const statusText = wasmInstance.exports.get_status();
+    const statusText = wasmInstance ? wasmInstance.exports.get_status() : 'idle';
     const infoEl = document.getElementById('fileInfo');
     const statusEl = document.getElementById('status');
 
@@ -191,6 +224,11 @@ function updateStatusDisplay(fileName, fileSize) {
     }
     if (statusEl) {
         statusEl.textContent = `State: ${statusText}`;
+    }
+    // Show/hide read section based on JS-side mount state (not WASM get_status())
+    const readSection = document.getElementById('readSection');
+    if (readSection) {
+        readSection.style.display = fileMounted ? 'block' : 'none';
     }
 }
 
@@ -257,3 +295,114 @@ window.addEventListener('beforeunload', () => {
 });
 
 main().then(setupFileInput);
+
+/// Parses an offset string: supports decimal integers and 0x-prefixed hex.
+/// Returns a non-negative integer, or -1 on parse failure.
+function parseOffset(str) {
+    str = str.trim();
+    if (str === '') return 0;
+    if (str.toLowerCase().startsWith('0x')) {
+        const val = parseInt(str, 16);
+        return isNaN(val) || val < 0 ? -1 : val;
+    }
+    const val = parseInt(str, 10);
+    return isNaN(val) || val < 0 ? -1 : val;
+}
+
+/// Formats bytes as space-separated uppercase hex pairs.
+function bytesToHex(byteArray) {
+    return Array.from(byteArray)
+        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+        .join(' ');
+}
+
+/// Reads bytes at a given offset in the mounted file.
+/// Called when Read button is pressed.
+function readAtOffset(offsetInput, sizeValue) {
+    if (!wasmInstance || !wasmInstance.exports) {
+        alert('WASM module not loaded.');
+        return;
+    }
+
+    const offset = parseOffset(offsetInput);
+    if (offset < 0) {
+        alert('Invalid offset. Enter a decimal number or 0x-prefixed hex (e.g., 1024 or 0x400).');
+        return;
+    }
+
+    const size = parseInt(sizeValue, 10);
+    if (isNaN(size) || (size !== 1 && size !== 2 && size !== 4 && size !== 8)) {
+        alert('Invalid size. Choose 1, 2, 4, or 8 from the Size dropdown.');
+        return;
+    }
+
+    // Use the JS-side fileLength (avoids WASM unsigned long ABI issues).
+    const fileBuffer = 0; // File data always starts at memory address 0.
+
+    // Clamp to file bounds
+    let actualSize = size;
+    let actualOffset = offset;
+    let clamped = false;
+
+    if (offset >= fileLength) {
+        // Offset is beyond file end — return error
+        const readOutput = document.getElementById('readOutput');
+        if (readOutput) {
+            readOutput.textContent = 'Offset ' + offset + ' is beyond file end (' + fileLength + ' bytes).';
+        }
+        alert('Offset ' + offset + ' is beyond the mounted file size (' + fileLength + ' bytes).');
+        return;
+    }
+
+    // Clamp actualSize so we don't read past file end
+    if (offset + size > fileLength) {
+        actualSize = fileLength - offset;
+        clamped = true;
+    }
+
+    // Read bytes from WASM memory at offset position
+    const wasmMemory = wasmInstance.exports.memory;
+    const memoryView = new Uint8Array(wasmMemory.buffer);
+    const result = new Uint8Array(actualSize);
+    result.set(memoryView.slice(Number(fileBuffer) + actualOffset, Number(fileBuffer) + actualOffset + actualSize));
+
+    const hexString = bytesToHex(result);
+    const outputText = 'Offset: ' + offset + ' | Size: ' + actualSize + ' Byte(s)\n' + hexString;
+
+    // Console output (same format as debug hex output)
+    console.log('--- Read at Offset ' + offset + ' (' + actualSize + ' Byte(s)) ---');
+    console.log(outputText);
+    console.log('--- end ---');
+
+    // Display in UI
+    const readOutput = document.getElementById('readOutput');
+    if (readOutput) {
+        readOutput.textContent = outputText;
+    }
+
+    if (clamped) {
+        alert(
+            'Note: Offset ' + offset + ' is near the end of the file.\n' +
+            'Read clamped to ' + actualSize + ' byte(s) (file ends at ' + fileLength + ' bytes).\n' +
+            'Hex output above reflects available bytes only.'
+        );
+    }
+}
+
+/// Handler for the Read button (exposed to HTML onclick).
+function handleRead() {
+    const offsetInput = document.getElementById('offsetInput').value;
+    const sizeValue = document.getElementById('sizeSelect').value;
+    readAtOffset(offsetInput, sizeValue);
+}
+window.handleRead = handleRead;
+
+/// Show/hide read section based on mount status.
+function updateReadSectionVisibility() {
+    if (!wasmInstance) return;
+    const statusText = wasmInstance.exports.get_status();
+    const readSection = document.getElementById('readSection');
+    if (readSection) {
+        readSection.style.display = (statusText === 'file_loaded') ? 'block' : 'none';
+    }
+}
