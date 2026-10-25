@@ -1,6 +1,12 @@
 /// Internal file management state for the WASM module.
 /// Used by both `main.cc` (WASM build) and test binaries.
 /// All types are raw C built-in types (no standard library).
+///
+/// RAII exemption: See CLAUDE.md 0.4-1.
+/// JavaScript manages the WASM memory buffer directly via Uint8Array.
+/// The WASM module only records a pointer and length.
+/// "Unmount" is simply setting the pointer to nullptr and length to 0.
+/// There are no system resources, no dynamic allocations, and no RAII to apply to.
 
 // Greeting message stored in static memory.
 static char message_buffer[] = "Hello, world!";

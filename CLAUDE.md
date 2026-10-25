@@ -78,6 +78,22 @@ When producing C++ code (`.h`, `.cc`, `.cpp`):
 
 If project-specific C++ conventions exist and conflict, surface the conflict for the user's decision — do not silently pick one.
 
+## 0.4-1 RAII Exception for WASM Target
+
+**Any compilation unit compiled with `-nostdlib -nostartfiles` is exempt from the RAII rule above.** This exemption covers the current files (`src/main.cc`, `src/file_manager.cc`) and any future files added to the WASM build.
+
+### Why RAII does not apply
+
+The WASM module has zero dynamic allocation, zero system resources, and zero standard library:
+
+- **No dynamic allocation exists:** The WASM module uses no `new`, `malloc`, or vectors. JavaScript copies file data into WASM linear memory directly via `Uint8Array`, and the WASM module only records a pointer and length. "Unmount" simply sets the pointer to `nullptr` and length to `0`.
+- **No system resources:** No file I/O, sockets, mutexes, or handles exist in the WASM module. RAII has nothing to apply to.
+- **No standard library:** `<memory>`, `<string>`, `<vector>` — none of these are available. Smart pointers and `std::unique_ptr` cannot be used.
+
+### Host C++ is NOT exempt
+
+All other compilation units (server, tests) compile with full stdlib support and MUST follow RAII rules without exception. This includes `server/server.cc`, `server/server_port.cc`, `tests/test_main.cc`, and `server/tests/test_server.cc`.
+
 ## 0.6 Documentation Update After Feature Implementation
 
 After a feature is implemented **and** its unit tests pass (`ctest --test-dir build -V`), the corresponding documentation in `docs/` MUST be updated. This is mandatory — not optional.
