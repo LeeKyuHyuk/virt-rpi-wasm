@@ -190,7 +190,7 @@ This runs the `server-basic` test, which starts a temporary HTTP server in a bac
 ├── src/main.cc              → WebAssembly module (extern "C" exports)
 ├── server/server.cc         → HTTP server binary (cpp-httplib, main)
 ├── server/server_port.cc    → TCP port scanner library (no main)
-├── server/test_server.cc    → Unit tests (cpp-httplib Client)
+├── server/tests/test_server.cc → Unit tests (cpp-httplib Client)
 ├── js/main.js               → JavaScript WASM loader + file-mount + read-at-offset UI
 ├── index.html               → HTML entry page (file input, debug checkbox, mount/unmount/read buttons)
 ├── lib/cpp-httplib/         → Git submodule (header-only HTTP library)
@@ -203,15 +203,79 @@ This runs the `server-basic` test, which starts a temporary HTTP server in a bac
 
 2. **HTTP server** (`server/server.cc` + `server/server_port.cc`): A two-library hierarchy — `server_port_lib` (port scanner, no main) is linked by `server_lib` (httplib server with main) which is linked by `run-server` (executable). `find_free_port` scans TCP ports by attempting socket connects; a successful connect means the port is in use, a failure means it is free.
 
-3. **Unit tests** (`server/test_server.cc`): Links against `server_lib` and `server_port_lib`. Starts an HTTP server in a background thread, polls for readiness, then uses cpp-httplib `Client` to verify `GET /index.html` (status 200), `GET /build/virt-rpi.wasm` (status 200, non-empty body), and port fallback when port 8000 is occupied. Server is shut down via `svr.stop()` (unblocks `listen()`), then the thread is joined.
+3. **Unit tests** (`server/tests/test_server.cc`): Links against `server_lib` and `server_port_lib`. Starts an HTTP server in a background thread, polls for readiness, then uses cpp-httplib `Client` to verify `GET /index.html` (status 200), `GET /build/virt-rpi.wasm` (status 200, non-empty body), and port fallback when port 8000 is occupied. Server is shut down via `svr.stop()` (unblocks `listen()`), then the thread is joined.
 
 **Key CMake design decisions:**
 - WASM uses a `custom_command` (avoids `--dependency-file` incompatibility with `wasm-ld`)
 - `server_port_lib` is a static library with no `main`, so it can be linked by both `run-server` and `run-server-test` without "multiple definition of main" errors
 - `server_lib` is also a static library (not an executable) to avoid duplicate `main` when linked by the test binary
 - All libraries define `PROJECT_ROOT` to the source directory so the server serves the correct files
+- GTest is linked by `run-server-test` and managed by CTest. New WASM export unit tests (e.g., testing `load_file()`, `get_file_buffer()`) are written in GTest style and registered with `add_test()` so CTest runs them alongside existing integration tests.
 
-### JavaScript: File Mount and Read at Offset
+## 0.5 Unit Test Workflow
+
+When requesting a feature implementation, the following workflow is mandatory (except for trivial operations: typo fixes, comment updates, CLAUDE.md edits):
+
+```
+Plan → Implement → Verify → Unit Test → Unit Test run
+```
+
+1. **Plan** — Write a plan to `.claude/plans/<feature-name>.md`. Define scope, success criteria, and verification steps.
+2. **Implement** — Write the implementation code. Follow all existing CLAUDE.md rules (Google C++ style, RAII, etc.).
+3. **Verify** — Build (`cmake --build build`) and run existing tests (`ctest --test-dir build`). For UI features, manually verify in browser (fetch `/index.html`, confirm UI works).
+4. **Unit Test** — Write GTest tests for new functionality. Apply the `unit-test` skill (`.claude/skills/unit-test.md`).
+5. **Unit Test run** — Run `ctest --test-dir build -V` to confirm all tests (existing + new) pass.
+
+**Test file location convention:**
+
+- **WASM module tests** (testing `load_file()`, `read_at_offset()`, etc.) go in the project `tests/` directory (e.g., `tests/test_main.cc`).
+- **Server tests** (testing HTTP endpoints, port scanning) go in `server/tests/` (e.g., `server/tests/test_server.cc`).
+
+**Trivial operations** (typo fixes, comment updates, CLAUDE.md edits) are exempt from this workflow.
+
+When a new test breaks an existing test, fix the existing test together with the new implementation (use `fix!` or `feat!` commit type with a breaking change footer).
+
+### GTest Integration
+
+This project uses Google Test (GTest) managed by CTest. New unit tests for WASM exports (e.g., `load_file()`, `get_file_buffer()`, `read_at_offset()`) should be written in GTest style following the AAA pattern (`.claude/skills/unit-test.md`).
+
+Example GTest for WASM export:
+```cpp
+TEST(FileMount, ReturnsZeroOnSuccess) {
+    // Arrange
+    unsigned char fileData[] = {0x48, 0x65, 0x6C, 0x6C, 0x6F}; // "Hello"
+    unsigned long length = sizeof(fileData);
+
+    // Act
+    int result = load_file(0, length);
+
+    // Assert
+    EXPECT_EQ(0, result);
+    // Verify file is registered in WASM state
+    EXPECT_EQ(fileData[0], read_at_offset(0, 1));
+}
+```
+
+Register new GTest tests in CMakeLists.txt with `add_test()` so CTest manages them alongside existing integration tests.
+
+### Tests Worth Writing (anti-coverage)
+
+Do not write tests that only prove a public API exists. The following patterns are **forbidden** — they increase maintenance cost without catching bugs:
+
+- **Getter/setter tests**: `EXPECT_EQ(42, object.GetId())` — the getter is one line; testing it tests nothing.
+- **Simple assignment tests**: `object.SetName("foo"); EXPECT_EQ(std::string("foo"), object.GetName())` — this tests `std::string` assignment, which is not your code.
+- **Trivial constructor tests**: `Foo f; EXPECT_EQ(0, f.value)` — where `value` is just an initialized member variable.
+
+A test is worth writing only when it verifies **a non-trivial behavior you control**:
+
+1. **A decision point** (if/else branches, boundary conditions, error paths)
+2. **A state transition** (before → after, with meaningful change)
+3. **An interaction between two components** (not just one in isolation)
+4. **A failure mode** (what happens when inputs are invalid, resources exhausted)
+
+When writing a test, ask: "What bug does this catch that I would not notice?" If the answer is "the test file stops compiling when I rename a function," skip it.
+
+### JavaScript layer: Testing
 
 The JavaScript layer (`js/main.js`) provides the following capabilities beyond the original `get_message()` display:
 

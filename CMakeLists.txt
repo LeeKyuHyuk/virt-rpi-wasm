@@ -42,7 +42,7 @@ add_executable(run-server $<TARGET_OBJECTS:server_lib>)
 target_link_libraries(run-server PRIVATE server_port_lib)
 
 # --- Unit test binary (links server_lib for find_free_port) ---
-add_executable(run-server-test server/test_server.cc)
+add_executable(run-server-test server/tests/test_server.cc)
 target_include_directories(run-server-test PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/cpp-httplib
 )
