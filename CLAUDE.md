@@ -78,6 +78,63 @@ When producing C++ code (`.h`, `.cc`, `.cpp`):
 
 If project-specific C++ conventions exist and conflict, surface the conflict for the user's decision — do not silently pick one.
 
+## 0.6 Documentation Update After Feature Implementation
+
+After a feature is implemented **and** its unit tests pass (`ctest --test-dir build -V`), the corresponding documentation in `docs/` MUST be updated. This is mandatory — not optional.
+
+```
+Feature Implementation → Unit Test Verification → docs Update
+```
+
+### Workflow
+
+1. **Verify unit tests pass** — Run `ctest --test-dir build -V`. If any test fails, do NOT update docs yet; fix the failure first.
+2. **Update or create the corresponding doc file** — Check whether `docs/<feature-name>.md` already exists:
+   - **If it exists:** Review the source code changes and update the documentation to reflect the new/changed behavior, API signatures, decision flows, error states, and JavaScript interaction patterns.
+   - **If it does NOT exist:** Create a new documentation file following the naming convention `NN-feature-name.md` (e.g., `07-new-feature.md`). Follow the existing documentation style: WASM exports table, implementation details, decision flow, error states, JavaScript interaction.
+3. **Update `docs/README.md`** — Add or update the entry in the Table of Contents table, and update the folder description if the new feature introduces a new category.
+
+### Naming Convention
+
+| File | Topic |
+|------|-------|
+| `01-project-architecture.md` | Build system, file layout, key design decisions |
+| `02-greet-message.md` | Greet message feature |
+| `03-file-mount.md` | File mount feature |
+| `04-read-at-offset.md` | Read-at-offset feature |
+| `05-http-server.md` | HTTP server feature |
+| `06-unit-tests.md` | Complete unit test documentation |
+
+When creating a new feature doc:
+- Assign the next available number (`ls docs/ | grep -oE '^[0-9]+-' | sort -n | tail -1 | awk -F- '{print $1+1}'`)
+- Prefix with zero-padded two-digit number
+- Use a descriptive kebab-case name
+- Write to `docs/NN-feature-name.md`
+
+### Documentation Content Requirements
+
+Every feature doc MUST include (where applicable):
+- **Overview** — What the feature does, one paragraph
+- **WASM Exports** — Table of all `extern "C"` functions (name, parameters, return value, description)
+- **Implementation Details** — Source file, line numbers, key code snippets
+- **Decision Flow** — Error paths, guard clauses, boundary conditions (as a diagram or table)
+- **Error States** — When and how errors manifest (status values, return codes)
+- **JavaScript Interaction** — How JS calls the WASM exports, state management, UI behavior
+- **Notes** — Any caveats, known limitations, or design rationale
+
+### `docs/README.md` Update
+
+After creating or updating a feature doc:
+1. Add or update the row in the Table of Contents table (File column, Topic column)
+2. Update the folder description paragraph if the feature introduces a new concept not covered elsewhere
+3. Ensure the file links resolve correctly (relative paths, correct filenames)
+
+### When This Rule Is Skipped
+
+- Trivial operations (typo fixes, comment updates, CLAUDE.md edits)
+- The feature has no user-facing API (internal refactoring with no API change)
+- The user explicitly waives the requirement (uncommon, must be explicit)
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
