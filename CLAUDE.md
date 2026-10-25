@@ -46,6 +46,8 @@ When asked to commit:
 - **The `[optional body]` is mandatory.** Every commit message MUST include a body section describing what changed and why, not just the subject line.
 - Present the chosen type, scope, and body to the user before committing so they can confirm it is correct.
 
+**Pre-commit verification gate:** Before committing, you MUST run `cmake --build build` and `ctest --test-dir build -V` (or `--tests-regex <name>` for a single test). **If any build step fails or any test fails, do NOT commit.** The commit proceeds only when both build and all tests pass. If a test fails, fix the failure and re-verify before attempting another commit.
+
 ## 0.3 Build Stack: Vanilla C/C++ via LLVM/Clang, No Emscripten
 
 **WebAssembly for this project is produced from Vanilla C/C++ compiled with LLVM/Clang.**

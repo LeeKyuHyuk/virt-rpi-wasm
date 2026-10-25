@@ -41,6 +41,13 @@ target_link_libraries(server_lib PRIVATE server_port_lib)
 add_executable(run-server $<TARGET_OBJECTS:server_lib>)
 target_link_libraries(run-server PRIVATE server_port_lib)
 
+# --- GTest (vendored in lib/gtest, always available) ---
+add_subdirectory(lib/gtest EXCLUDE_FROM_ALL)
+
+# --- WASM module tests (links file_manager directly for state inspection) ---
+add_executable(run-wasm-tests tests/test_main.cc)
+target_link_libraries(run-wasm-tests PRIVATE GTest::gtest GTest::gtest_main)
+
 # --- Unit test binary (links server_lib for find_free_port) ---
 add_executable(run-server-test server/tests/test_server.cc)
 target_include_directories(run-server-test PRIVATE
@@ -50,6 +57,8 @@ target_compile_definitions(run-server-test PRIVATE
     PROJECT_ROOT="${CMAKE_SOURCE_DIR}"
 )
 target_link_libraries(run-server-test PRIVATE server_lib server_port_lib)
+target_link_libraries(run-server-test PRIVATE GTest::gtest GTest::gtest_main)
 
 enable_testing()
 add_test(NAME server-basic COMMAND run-server-test)
+add_test(NAME wasm-file-manager COMMAND run-wasm-tests)
